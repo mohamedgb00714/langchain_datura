@@ -37,20 +37,128 @@ The `twitter_tools` group contains tools specifically for Twitter-related operat
 - `FetchRetweetsByPostTool`: Retrieve retweets of a specific post.
 - `FetchTwitterUserTool`: Get detailed information about a Twitter user.
 
-### Using the LangChain Agent
+### Examples
 
-You can create a LangChain agent that uses the `search_tools` for various operations.
+#### Using Tools
+```python
+from langchain_datura.tools import DesearchTool, BasicWebSearchTool, BasicTwitterSearchTool
 
-#### Example
+# Example 1: Using DesearchTool
+tool = DesearchTool()
+result = tool._run(
+    prompt="Bittensor",
+    tool="desearch_web",
+    model="NOVA",
+    date_filter="PAST_24_HOURS",
+    streaming=False
+)
+print(result)
+
+# Example 2: Using BasicWebSearchTool
+tool = BasicWebSearchTool()
+result = tool._run(
+    query="Latest news on AI",
+    num=5,
+    start=1
+)
+print(result)
+
+# Example 3: Using BasicTwitterSearchTool
+tool = BasicTwitterSearchTool()
+result = tool._run(
+    query="AI trends",
+    sort="Top",
+    count=5
+)
+print(result)
+```
+
+#### Using RAG (Retrieval-Augmented Generation)
+```python
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough, RunnableParallel
+from langchain_core.output_parsers import StrOutputParser
+from langchain_datura.tools import DesearchTool
+from langchain_deepseek import ChatDeepSeek
+
+# Setup Desearch Tool
+desearch_tool = DesearchTool()
+
+# Template to wrap Desearch output
+document_prompt = PromptTemplate.from_template("""
+<source>
+    <result>{result}</result>
+</source>
+""")
+
+# Retrieval chain using DesearchTool
+def get_desearch_context(prompt: str) -> str:
+    return desearch_tool._run(prompt=prompt, tool="desearch_web", model="NOVA")
+
+retrieval_chain = RunnableLambda(lambda query: {
+    "result": get_desearch_context(query)
+}) | document_prompt | (lambda docs: docs.text)
+
+# Prompt for RAG generation
+generation_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are an expert research assistant. You use xml-formatted context to research people's questions."),
+    ("human", """
+Please answer the following query based on the provided context. Please cite your sources at the end of your response.:
+
+Query: {query}
+---
+<context>
+{context}
+</context>
+""")
+])
+
+# Use DeepSeek for LLM
+llm = ChatDeepSeek(
+    model="deepseek-chat",
+    temperature=0.7,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2
+)
+
+output_parser = StrOutputParser()
+
+# Final chain
+chain = RunnableParallel({
+    "query": RunnablePassthrough(),
+    "context": retrieval_chain,
+}) | generation_prompt | llm | output_parser
+
+# Run it!
+query = "Recent trends in AI safety research"
+result = chain.invoke(query)
+print(result)
+```
+
+#### Using the LangChain Agent
 ```python
 from langchain_datura.agent import create_search_agent
+from langchain_deepseek import ChatDeepSeek
 
-# Initialize the agent
-agent = create_search_agent(openai_api_key="your-openai-api-key")
+# Create a DeepSeek LLM instance
+llm = ChatDeepSeek(
+    model="deepseek-chat",
+    temperature=0.7,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2
+)
+
+# Initialize the search agent
+search_agent = create_search_agent(llm=llm)
 
 # Use the agent to perform a task
-response = agent.run("Find the latest news about AI.")
-print(response)
+state = {
+    "input_message": "What's the latest news on AI?",
+}
+response = search_agent.invoke(state)
+print(f"Agent Response: {response['output']}")
 ```
 
 ### Running Tests
@@ -69,39 +177,6 @@ pytest tests/test_tools_real.py
 
 > **Note**: Ensure you have a valid `DATURA_API_KEY` in your `.env` file before running real tests.
 
-### Example Usage
-
-#### Importing Grouped Tools
-```python
-from langchain_datura.search_tools import search_tools, twitter_tools
-```
-
-#### Using a Search Tool
-```python
-from langchain_datura.search_tools import search_tools
-
-tool = search_tools[0]()  # DesearchTool
-result = tool._run(
-    prompt="Bittensor",
-    tool="desearch_ai",
-    model="NOVA",
-    date_filter="PAST_24_HOURS",
-    streaming=False
-)
-print(result)
-```
-
-#### Using a Twitter Tool
-```python
-from langchain_datura.search_tools import twitter_tools
-
-tool = twitter_tools[1]()  # FetchTweetsByUrlsTool
-result = tool._run(
-    urls=["https://twitter.com/elonmusk/status/1613000000000000000"]
-)
-print(result)
-```
-
 ## Project Structure
 
 ```
@@ -109,12 +184,19 @@ langchain_datura/
 ├── langchain_datura/
 │   ├── __init__.py
 │   ├── tools.py
+│   ├── search_tools.py
+│   ├── agent.py
+├── examples/
+│   ├── tools.py
+│   ├── RAG.py
+│   ├── agent.py
 ├── tests/
 │   ├── test_tools.py
 │   ├── test_tools_real.py
 ├── .env
 ├── README.md
-└── requirements.txt
+├── setup.py
+├── requirements.txt
 ```
 
 ## Contributing
